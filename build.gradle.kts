@@ -19,7 +19,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit")
 
-    implementation("org.eclipse.jetty:jetty-server:9.4.26.v20200117")
+    implementation("com.sparkjava:spark-core:2.9.0")
     implementation("com.google.code.gson:gson:2.8.6")
 }
 

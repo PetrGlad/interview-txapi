@@ -3,37 +3,40 @@
  */
 package petrlgad.txapi
 
-import org.eclipse.jetty.server.Request
-import org.eclipse.jetty.server.Server
-import org.eclipse.jetty.server.handler.AbstractHandler
-import java.io.IOException
-import javax.servlet.ServletException
-import javax.servlet.http.HttpServletRequest
-import javax.servlet.http.HttpServletResponse
+import com.google.gson.Gson
+import spark.Request
+import spark.Response
+import spark.Spark.*
+import java.math.BigDecimal
 
-class HelloHandler @JvmOverloads constructor(val greeting: String = "Hello, world!",
-                                             val body: String? = null)
-    : AbstractHandler() {
+typealias AccountId = String
+typealias CurrencyId = String
 
-    @Throws(IOException::class, ServletException::class)
-    override fun handle(target: String,
-                        baseRequest: Request,
-                        request: HttpServletRequest,
-                        response: HttpServletResponse) {
-        response.contentType = "text/html; charset=utf-8"
-        response.status = HttpServletResponse.SC_OK
-        val out = response.writer
-        out.println("<h1>$greeting</h1>")
-        if (body != null) {
-            out.println(body)
-        }
-        baseRequest.isHandled = true
-    }
-}
+data class Account(val id: AccountId,
+                   val value: BigDecimal,
+                   val currency: CurrencyId)
+
+data class Transfer(val from_account_id: AccountId,
+                    val to_account_id: AccountId,
+                    val amount: BigDecimal,
+                    val currency: CurrencyId)
+
+val jsonContentType = "application/json; charset=utf-8"
+val GSON = Gson()
 
 fun main(args: Array<String>) {
-    val server = Server(8080);
-    server.handler = HelloHandler(body ="BLAH!!!")
-    server.start();
-    server.join();
+    port(8080)
+    get("/accounts/list") { req: Request, resp: Response ->
+        resp.type(jsonContentType)
+        GSON.toJson(arrayListOf(
+                Account("1", BigDecimal.valueOf(355.0), "EUR"),
+                Account("2", BigDecimal.valueOf(45.0), "EUR")
+        ))
+    }
+    put("/accounts/by-id/:id") { req: Request, resp: Response ->
+        TODO("Not implemented")
+    }
+    put("/transfers/by-owner/:owner/by-id/:id") { req: Request, resp: Response ->
+        TODO("Not implemented")
+    }
 }
