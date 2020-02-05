@@ -4,10 +4,13 @@
 package petrlgad.txapi
 
 import com.google.gson.Gson
+import com.zaxxer.hikari.HikariDataSource
+import org.slf4j.LoggerFactory
 import spark.Request
 import spark.Response
 import spark.Spark.*
 import java.math.BigDecimal
+import javax.sql.DataSource
 
 typealias AccountId = String
 typealias CurrencyId = String
@@ -21,22 +24,84 @@ data class Transfer(val from_account_id: AccountId,
                     val amount: BigDecimal,
                     val currency: CurrencyId)
 
-val jsonContentType = "application/json; charset=utf-8"
-val GSON = Gson()
+val LOGGER = LoggerFactory.getLogger("petrglad.txapi.app")
+
+fun setupDb(jdbcUrl: String): DataSource {
+    val ds = HikariDataSource()
+    ds.jdbcUrl = jdbcUrl
+    ds.isAutoCommit = false
+    ds.connection.use { conn ->
+        conn.createStatement().use {
+            it.execute("create table account (" +
+                    "id varchar(256) primary key, " +
+                    "value decimal(12, 4)," +
+                    "currency char(3) )")
+        }
+        conn.commit()
+    }
+    return ds
+}
 
 fun main(args: Array<String>) {
+    val dataSource = setupDb("jdbc:h2:mem:txapi")
+    val jsonContentType = "application/json; charset=utf-8"
+    val gson = Gson()
     port(8080)
     get("/accounts/list") { req: Request, resp: Response ->
-        resp.type(jsonContentType)
-        GSON.toJson(arrayListOf(
-                Account("1", BigDecimal.valueOf(355.0), "EUR"),
-                Account("2", BigDecimal.valueOf(45.0), "EUR")
-        ))
+        dataSource.connection.use { conn ->
+            val result = ArrayList<Account>()
+            val stmt = conn.prepareStatement("select id, value, currency from account")
+            val rs = stmt.executeQuery()
+            while (rs.next()) {
+                result.add(Account(
+                        rs.getString(1),
+                        rs.getBigDecimal(2),
+                        rs.getString(3)))
+            }
+            resp.type(jsonContentType)
+            gson.toJson(result)
+        }
     }
     put("/accounts/by-id/:id") { req: Request, resp: Response ->
-        TODO("Not implemented")
+        dataSource.connection.use { conn ->
+            require(req.contentType().startsWith("application/json")) {
+                "JSON body is required, got content type ${req.contentType()}"
+            }
+            val acc = gson.fromJson(req.body(), Account::class.java)
+            val stmt = conn.prepareStatement("insert into account (id, value, currency) values (?, ?, ?) ")
+            stmt.setString(1, acc.id)
+            stmt.setBigDecimal(2, acc.value)
+            stmt.setString(3, acc.currency)
+            stmt.executeUpdate()
+            conn.commit()
+            resp.type(jsonContentType)
+            gson.toJson("OK")
+        }
     }
     put("/transfers/by-owner/:owner/by-id/:id") { req: Request, resp: Response ->
-        TODO("Not implemented")
+        dataSource.connection.use { conn ->
+            require(req.contentType().startsWith("application/json")) {
+                "JSON body is required, got content type ${req.contentType()}"
+            }
+            val tx = gson.fromJson(req.body(), Transfer::class.java)
+            fun updateBalance(accId: String, d: BigDecimal): Int {
+                val stmt = conn.prepareStatement("update account set value = value + ? where id = ? and currency = ?")
+                stmt.setBigDecimal(1, d)
+                stmt.setString(2, accId)
+                stmt.setString(3, tx.currency)
+                return stmt.executeUpdate()
+            }
+            LOGGER.info("Got tx $tx")
+            require(updateBalance(tx.from_account_id, -tx.amount) == 1) {
+                "Source account #${tx.from_account_id} is not found."
+            }
+            require(updateBalance(tx.to_account_id, tx.amount) == 1) {
+                "Destination account #${tx.to_account_id} is not found."
+            }
+            conn.commit()
+            resp.type(jsonContentType)
+            gson.toJson("OK")
+            TODO("Ensure transfers are within limits")
+        }
     }
 }

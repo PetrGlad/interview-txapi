@@ -8,19 +8,18 @@ import java.net.http.HttpRequest.BodyPublishers
 import java.net.http.HttpResponse
 import java.net.http.HttpResponse.BodyHandlers
 import java.time.Duration
-import java.util.*
-import kotlin.collections.ArrayList
 
 val GSON = Gson()
 
 fun getApiUrl(urlSuffix: String) = URI.create("http://localhost:8080/$urlSuffix")
+
 
 fun main() {
     val client: HttpClient = createHttpClient()
 
     doPut(client, "accounts/by-id/1",
             hashMapOf(
-                    "meta" to hashMapOf("id" to "1"),
+                    "id" to "1",
                     "currency" to "EUR",
                     "value" to 400.0))
             .also {
@@ -28,7 +27,7 @@ fun main() {
             }
     doPut(client, "accounts/by-id/2",
             hashMapOf(
-                    "meta" to hashMapOf("id" to "2"),
+                    "id" to "2",
                     "currency" to "EUR",
                     "value" to 0.0))
             .also {
@@ -36,11 +35,11 @@ fun main() {
             }
     doPut(client, "transfers/by-owner/me-at-home/by-id/1",
             hashMapOf(
-                    "meta" to hashMapOf(
-                            "id" to "2",
-                            "by" to "me-at-home"),
+                    "id" to "1",
                     "currency" to "EUR",
-                    "value" to 45.0))
+                    "amount" to 45.0,
+                    "from_account_id" to 1,
+                    "to_account_id" to 2))
             .also {
                 require(it.statusCode() == 200) { "Transfer failed: $it" }
             }
