@@ -10,6 +10,7 @@ import spark.Request
 import spark.Response
 import spark.Spark.*
 import java.math.BigDecimal
+import java.sql.Connection
 import javax.sql.DataSource
 
 typealias AccountId = String
@@ -56,6 +57,15 @@ fun exceptionToClientError(resp: Response, handler: () -> String): String =
             gson.toJson("FAILED")
         }
 
+fun updateBalance(conn: Connection, accId: String, currency: String, diff: BigDecimal): Int {
+    val stmt = conn.prepareStatement(
+            "update account set value = value + ? where id = ? and currency = ? and (value + ?) >= 0")
+    stmt.setBigDecimal(1, diff)
+    stmt.setString(2, accId)
+    stmt.setString(3, currency)
+    stmt.setBigDecimal(4, diff)
+    return stmt.executeUpdate()
+}
 
 fun main(_args: Array<String>) {
     val dataSource = setupDb("jdbc:h2:mem:txapi")
@@ -79,10 +89,10 @@ fun main(_args: Array<String>) {
     }
     put("/accounts/by-id/:id") { req: Request, resp: Response ->
         exceptionToClientError(resp) {
+            require(req.contentType().startsWith("application/json")) {
+                "JSON body is required, got content type ${req.contentType()}"
+            }
             dataSource.connection.use { conn ->
-                require(req.contentType().startsWith("application/json")) {
-                    "JSON body is required, got content type ${req.contentType()}"
-                }
                 val acc = gson.fromJson(req.body(), Account::class.java)
                 val stmt = conn.prepareStatement("insert into account (id, value, currency) values (?, ?, ?) ")
                 stmt.setString(1, acc.id)
@@ -98,25 +108,16 @@ fun main(_args: Array<String>) {
     }
     put("/transfers/by-owner/:owner/by-id/:id") { req: Request, resp: Response ->
         exceptionToClientError(resp) {
+            require(req.contentType().startsWith("application/json")) {
+                "JSON body is required, got content type ${req.contentType()}"
+            }
             dataSource.connection.use { conn ->
-                require(req.contentType().startsWith("application/json")) {
-                    "JSON body is required, got content type ${req.contentType()}"
-                }
                 val tx = gson.fromJson(req.body(), Transfer::class.java)
-                fun updateBalance(accId: String, diff: BigDecimal): Int {
-                    val stmt = conn.prepareStatement(
-                            "update account set value = value + ? where id = ? and currency = ? and (value + ?) >= 0")
-                    stmt.setBigDecimal(1, diff)
-                    stmt.setString(2, accId)
-                    stmt.setString(3, tx.currency)
-                    stmt.setBigDecimal(4, diff)
-                    return stmt.executeUpdate()
-                }
-                LOGGER.info("Got tx $tx")
-                require(updateBalance(tx.from_account_id, -tx.amount) == 1) {
+                LOGGER.info("Got transfer $tx")
+                require(updateBalance(conn, tx.from_account_id, tx.currency, -tx.amount) == 1) {
                     "Source account #${tx.from_account_id} is not found or cannot be updated due to overdraft."
                 }
-                require(updateBalance(tx.to_account_id, tx.amount) == 1) {
+                require(updateBalance(conn, tx.to_account_id, tx.currency, tx.amount) == 1) {
                     "Destination account #${tx.to_account_id} is not found."
                 }
                 conn.commit()
