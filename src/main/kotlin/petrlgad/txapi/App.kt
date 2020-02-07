@@ -42,66 +42,88 @@ fun setupDb(jdbcUrl: String): DataSource {
     return ds
 }
 
-fun main(args: Array<String>) {
+const val jsonContentType = "application/json; charset=utf-8"
+
+val gson = Gson()
+
+fun exceptionToClientError(resp: Response, handler: () -> String): String =
+        try {
+            handler()
+        } catch (ex: Exception) {
+            LOGGER.warn("Request handling error.", ex)
+            resp.status(400)
+            resp.type(jsonContentType)
+            gson.toJson("FAILED")
+        }
+
+
+fun main(_args: Array<String>) {
     val dataSource = setupDb("jdbc:h2:mem:txapi")
-    val jsonContentType = "application/json; charset=utf-8"
-    val gson = Gson()
     port(8080)
     get("/accounts/list") { req: Request, resp: Response ->
-        dataSource.connection.use { conn ->
-            val result = ArrayList<Account>()
-            val stmt = conn.prepareStatement("select id, value, currency from account")
-            val rs = stmt.executeQuery()
-            while (rs.next()) {
-                result.add(Account(
-                        rs.getString(1),
-                        rs.getBigDecimal(2),
-                        rs.getString(3)))
+        exceptionToClientError(resp) {
+            dataSource.connection.use { conn ->
+                val result = ArrayList<Account>()
+                val stmt = conn.prepareStatement("select id, value, currency from account")
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    result.add(Account(
+                            rs.getString(1),
+                            rs.getBigDecimal(2),
+                            rs.getString(3)))
+                }
+                resp.type(jsonContentType)
+                gson.toJson(result)
             }
-            resp.type(jsonContentType)
-            gson.toJson(result)
         }
     }
     put("/accounts/by-id/:id") { req: Request, resp: Response ->
-        dataSource.connection.use { conn ->
-            require(req.contentType().startsWith("application/json")) {
-                "JSON body is required, got content type ${req.contentType()}"
+        exceptionToClientError(resp) {
+            dataSource.connection.use { conn ->
+                require(req.contentType().startsWith("application/json")) {
+                    "JSON body is required, got content type ${req.contentType()}"
+                }
+                val acc = gson.fromJson(req.body(), Account::class.java)
+                val stmt = conn.prepareStatement("insert into account (id, value, currency) values (?, ?, ?) ")
+                stmt.setString(1, acc.id)
+                stmt.setBigDecimal(2, acc.value)
+                stmt.setString(3, acc.currency)
+                stmt.executeUpdate()
+                conn.commit()
+
+                resp.type(jsonContentType)
+                gson.toJson("OK")
             }
-            val acc = gson.fromJson(req.body(), Account::class.java)
-            val stmt = conn.prepareStatement("insert into account (id, value, currency) values (?, ?, ?) ")
-            stmt.setString(1, acc.id)
-            stmt.setBigDecimal(2, acc.value)
-            stmt.setString(3, acc.currency)
-            stmt.executeUpdate()
-            conn.commit()
-            resp.type(jsonContentType)
-            gson.toJson("OK")
         }
     }
     put("/transfers/by-owner/:owner/by-id/:id") { req: Request, resp: Response ->
-        dataSource.connection.use { conn ->
-            require(req.contentType().startsWith("application/json")) {
-                "JSON body is required, got content type ${req.contentType()}"
+        exceptionToClientError(resp) {
+            dataSource.connection.use { conn ->
+                require(req.contentType().startsWith("application/json")) {
+                    "JSON body is required, got content type ${req.contentType()}"
+                }
+                val tx = gson.fromJson(req.body(), Transfer::class.java)
+                fun updateBalance(accId: String, diff: BigDecimal): Int {
+                    val stmt = conn.prepareStatement(
+                            "update account set value = value + ? where id = ? and currency = ? and (value + ?) >= 0")
+                    stmt.setBigDecimal(1, diff)
+                    stmt.setString(2, accId)
+                    stmt.setString(3, tx.currency)
+                    stmt.setBigDecimal(4, diff)
+                    return stmt.executeUpdate()
+                }
+                LOGGER.info("Got tx $tx")
+                require(updateBalance(tx.from_account_id, -tx.amount) == 1) {
+                    "Source account #${tx.from_account_id} is not found or cannot be updated due to overdraft."
+                }
+                require(updateBalance(tx.to_account_id, tx.amount) == 1) {
+                    "Destination account #${tx.to_account_id} is not found."
+                }
+                conn.commit()
+
+                resp.type(jsonContentType)
+                gson.toJson("OK")
             }
-            val tx = gson.fromJson(req.body(), Transfer::class.java)
-            fun updateBalance(accId: String, d: BigDecimal): Int {
-                val stmt = conn.prepareStatement("update account set value = value + ? where id = ? and currency = ?")
-                stmt.setBigDecimal(1, d)
-                stmt.setString(2, accId)
-                stmt.setString(3, tx.currency)
-                return stmt.executeUpdate()
-            }
-            LOGGER.info("Got tx $tx")
-            require(updateBalance(tx.from_account_id, -tx.amount) == 1) {
-                "Source account #${tx.from_account_id} is not found."
-            }
-            require(updateBalance(tx.to_account_id, tx.amount) == 1) {
-                "Destination account #${tx.to_account_id} is not found."
-            }
-            conn.commit()
-            resp.type(jsonContentType)
-            gson.toJson("OK")
-            TODO("Ensure transfers are within limits")
         }
     }
 }

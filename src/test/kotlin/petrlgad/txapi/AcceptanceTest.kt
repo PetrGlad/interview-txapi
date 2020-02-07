@@ -17,6 +17,7 @@ fun getApiUrl(urlSuffix: String) = URI.create("http://localhost:8080/$urlSuffix"
 fun main() {
     val client: HttpClient = createHttpClient()
 
+    // Creating fresh accounts
     doPut(client, "accounts/by-id/1",
             hashMapOf(
                     "id" to "1",
@@ -33,6 +34,42 @@ fun main() {
             .also {
                 require(it.statusCode() == 200) { "Failed to create 2nd account: $it" }
             }
+
+    // Non existing source account
+    doPut(client, "transfers/by-owner/me-at-home/by-id/1",
+            hashMapOf(
+                    "id" to "1",
+                    "currency" to "EUR",
+                    "amount" to 1.0,
+                    "from_account_id" to 321,
+                    "to_account_id" to 2))
+            .also {
+                require(it.statusCode() == 400) { "Transfer failed: $it" }
+            }
+    // Non existing target account
+    doPut(client, "transfers/by-owner/me-at-home/by-id/1",
+            hashMapOf(
+                    "id" to "1",
+                    "currency" to "EUR",
+                    "amount" to 1.0,
+                    "from_account_id" to 321,
+                    "to_account_id" to 2))
+            .also {
+                require(it.statusCode() == 400) { "Transfer failed: $it" }
+            }
+    // Overdraft
+    doPut(client, "transfers/by-owner/me-at-home/by-id/1",
+            hashMapOf(
+                    "id" to "1",
+                    "currency" to "EUR",
+                    "amount" to 99999.0,
+                    "from_account_id" to 1,
+                    "to_account_id" to 2))
+            .also {
+                require(it.statusCode() == 400) { "Transfer failed: $it" }
+            }
+
+    // Successful transfer
     doPut(client, "transfers/by-owner/me-at-home/by-id/1",
             hashMapOf(
                     "id" to "1",
@@ -43,6 +80,7 @@ fun main() {
             .also {
                 require(it.statusCode() == 200) { "Transfer failed: $it" }
             }
+
     doGet(client, "accounts/list")
             .also {
                 require(it.statusCode() == 200) { "Cannot det accounts list: $it" }
